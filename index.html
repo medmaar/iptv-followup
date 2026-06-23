@@ -252,64 +252,73 @@ function saveSettings() {
 // ================================================================
 async function loadTrials() {
   const { apiKey, proxyUrl } = getSettings();
-
-  if (!apiKey) {
-    openSettings();
-    return;
-  }
+  if (!apiKey) { openSettings(); return; }
 
   document.getElementById('list').innerHTML =
     '<div class="loading"><div class="spin"></div>Loading trials…</div>';
 
   const base = proxyUrl || 'https://activationpanel.ru';
 
-  try {
-    const res = await fetch(`${base}/api/api.php?action=get_lines&api_key=${apiKey}`);
-    const text = await res.text();
+  // Try multiple possible action names — panel APIs vary
+  const ACTIONS = ['get_lines', 'lines', 'get_m3u_lines', 'get_all_lines', 'user_list'];
+  let lines = [];
+  let lastRaw = '';
+  let foundAction = '';
 
-    if (!res.ok) throw new Error(`HTTP ${res.status} — ${text.slice(0, 300)}`);
+  for (const action of ACTIONS) {
+    try {
+      const res = await fetch(`${base}/api/api.php?action=${action}&api_key=${apiKey}`);
+      const text = await res.text();
+      lastRaw = text;
+      if (!res.ok) continue;
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { continue; }
+      const arr = Array.isArray(parsed) ? parsed : (parsed.lines || parsed.data || []);
+      if (Array.isArray(arr) && arr.length > 0) {
+        lines = arr;
+        foundAction = action;
+        break;
+      }
+    } catch { continue; }
+  }
 
-    let raw;
-    try { raw = JSON.parse(text); }
-    catch { throw new Error(`Not JSON: ${text.slice(0, 300)}`); }
-
-    const lines = Array.isArray(raw) ? raw : (raw.lines || raw.data || []);
-
-    // Debug: show first raw line so we can see field names
-    if (lines.length > 0) {
-      console.log('RAW FIRST LINE:', JSON.stringify(lines[0], null, 2));
-    }
-
-    trials = lines.map(parseOneLine).filter(t => t && t.phone && t.phone.length > 5);
-
-    // If parsing filtered everything out, show raw debug info
-    if (trials.length === 0 && lines.length > 0) {
-      const sample = lines[0];
-      document.getElementById('list').innerHTML = `
-        <div class="err-box" style="background:#1a2a1a;border-color:#2a5a2a">
-          <b style="color:#4ade80">✅ API works — got ${lines.length} lines — but parser found 0 phones</b>
-          <p style="color:#86efac;margin-top:6px">First line raw fields:</p>
-          <code style="color:#86efac;white-space:pre-wrap">${JSON.stringify(sample, null, 2).slice(0, 800)}</code>
-        </div>`;
-      return;
-    }
-
-    updateStats();
-    render();
-
-  } catch (e) {
+  // Always show debug box so we can see raw response
+  if (lines.length === 0) {
     document.getElementById('list').innerHTML = `
-      <div class="err-box">
-        <b>⚠️ Could not load trials</b>
-        <p>${e.message}</p>
-        <code>${e.message}</code>
+      <div class="err-box" style="background:#1a1a2e;border-color:#2a2a5e">
+        <b style="color:#a78bfa">🔍 Debug — tried ${ACTIONS.length} API actions, all returned empty</b>
+        <p style="color:#c4b5fd;margin-top:6px">Last raw API response (action="${ACTIONS[ACTIONS.length-1]}"):</p>
+        <code style="color:#c4b5fd;white-space:pre-wrap;font-size:11px">${lastRaw.slice(0, 600) || '(empty)'}</code>
+        <p style="color:#c4b5fd;margin-top:8px">Also try visiting this URL directly to see the raw data:</p>
+        <code style="color:#a78bfa;font-size:11px;word-break:break-all">${base}/api/api.php?action=reseller_info&api_key=${apiKey}</code>
       </div>
       <div style="text-align:center;padding:12px">
         <button onclick="loadTrials()" style="background:#25D366;border:none;padding:9px 20px;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px">🔄 Retry</button>
         &nbsp;
         <button onclick="openSettings()" style="background:#21262d;border:none;padding:9px 16px;border-radius:8px;cursor:pointer;font-size:13px;color:#e6edf3">⚙️ Settings</button>
       </div>`;
+    return;
   }
+
+  // Show green debug + first raw line fields
+  if (foundAction) {
+    console.log(`✅ Found data with action="${foundAction}". First line:`, lines[0]);
+  }
+
+  trials = lines.map(parseOneLine).filter(t => t && t.phone && t.phone.length > 5);
+
+  if (trials.length === 0 && lines.length > 0) {
+    document.getElementById('list').innerHTML = `
+      <div class="err-box" style="background:#1a2a1a;border-color:#2a5a2a">
+        <b style="color:#4ade80">✅ API works — action="${foundAction}" — got ${lines.length} lines — but 0 have phones</b>
+        <p style="color:#86efac;margin-top:6px">First line raw JSON (need to find the phone field):</p>
+        <code style="color:#86efac;white-space:pre-wrap;font-size:11px">${JSON.stringify(lines[0], null, 2).slice(0, 800)}</code>
+      </div>`;
+    return;
+  }
+
+  updateStats();
+  render();
 }
 
 function parseOneLine(line) {
