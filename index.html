@@ -129,6 +129,9 @@ body{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFo
     <label>PANEL BASE URL</label>
     <input type="text" id="apiUrlInput" placeholder="https://activationpanel.ru">
     <div class="hint">Just the domain, no trailing slash</div>
+    <label>CORS PROXY URL <span style="color:#6e7681;font-weight:400">(required — see setup)</span></label>
+    <input type="text" id="proxyUrlInput" placeholder="https://iptv-cors-proxy.YOUR-NAME.workers.dev">
+    <div class="hint">Your Cloudflare proxy worker URL. Leave blank to try direct (will fail due to CORS).</div>
     <div class="modal-btns">
       <button class="btn-cancel" id="settingsCancelBtn" onclick="closeSettings()">Cancel</button>
       <button class="btn-save" onclick="saveSettings()">Save &amp; Load</button>
@@ -211,16 +214,17 @@ let pendingMarkId = null;
 // ================================================================
 function getSettings() {
   return {
-    apiKey: localStorage.getItem('iptv_api_key') || '',
-    apiUrl: localStorage.getItem('iptv_api_url') || 'https://activationpanel.ru',
+    apiKey:   localStorage.getItem('iptv_api_key') || '',
+    apiUrl:   localStorage.getItem('iptv_api_url') || 'https://activationpanel.ru',
+    proxyUrl: localStorage.getItem('iptv_proxy_url') || '',
   };
 }
 
 function openSettings() {
   const s = getSettings();
-  document.getElementById('apiKeyInput').value = s.apiKey;
-  document.getElementById('apiUrlInput').value = s.apiUrl;
-  // Only show cancel if settings already exist
+  document.getElementById('apiKeyInput').value   = s.apiKey;
+  document.getElementById('apiUrlInput').value   = s.apiUrl;
+  document.getElementById('proxyUrlInput').value = s.proxyUrl;
   document.getElementById('settingsCancelBtn').style.display = s.apiKey ? '' : 'none';
   document.getElementById('settingsOverlay').classList.add('open');
 }
@@ -230,11 +234,13 @@ function closeSettings() {
 }
 
 function saveSettings() {
-  const key = document.getElementById('apiKeyInput').value.trim();
-  const url = document.getElementById('apiUrlInput').value.trim().replace(/\/$/, '');
+  const key   = document.getElementById('apiKeyInput').value.trim();
+  const url   = document.getElementById('apiUrlInput').value.trim().replace(/\/$/, '');
+  const proxy = document.getElementById('proxyUrlInput').value.trim().replace(/\/$/, '');
   if (!key) { showToast('Please enter your API key'); return; }
-  localStorage.setItem('iptv_api_key', key);
-  localStorage.setItem('iptv_api_url', url || 'https://activationpanel.ru');
+  localStorage.setItem('iptv_api_key',   key);
+  localStorage.setItem('iptv_api_url',   url || 'https://activationpanel.ru');
+  localStorage.setItem('iptv_proxy_url', proxy);
   closeSettings();
   loadTrials();
 }
@@ -243,7 +249,7 @@ function saveSettings() {
 // LOAD TRIALS FROM ACTIVATION PANEL
 // ================================================================
 async function loadTrials() {
-  const { apiKey, apiUrl } = getSettings();
+  const { apiKey, apiUrl, proxyUrl } = getSettings();
 
   if (!apiKey) {
     openSettings();
@@ -253,16 +259,18 @@ async function loadTrials() {
   document.getElementById('list').innerHTML =
     '<div class="loading"><div class="spin"></div>Loading trials…</div>';
 
+  // Use proxy if set, otherwise try direct (will likely fail due to CORS)
+  const base = proxyUrl || apiUrl;
+
   try {
-    // Try common Activation Panel / TREX API endpoints
-    // Endpoint 1: GET with key param
-    let res = await fetch(`${apiUrl}/api/get_lines?key=${apiKey}`, {
+    // Try GET endpoint first
+    let res = await fetch(`${base}/api/get_lines?key=${apiKey}`, {
       headers: { 'Accept': 'application/json' }
     });
 
-    // Endpoint 2: fallback — POST with JSON body
+    // Fallback: POST with JSON body
     if (!res.ok) {
-      res = await fetch(`${apiUrl}/api/`, {
+      res = await fetch(`${base}/api/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'get_lines', key: apiKey }),
@@ -274,7 +282,7 @@ async function loadTrials() {
     const raw = await res.json();
     const lines = raw.lines || raw.data || raw || [];
 
-    if (!Array.isArray(lines)) throw new Error('Unexpected API response format');
+    if (!Array.isArray(lines)) throw new Error('Unexpected API response format. Visit /api/raw on your proxy to debug.');
 
     trials = lines.map(parseOneLine).filter(t => t && t.phone && t.phone.length > 5);
 
@@ -282,13 +290,11 @@ async function loadTrials() {
     render();
 
   } catch (e) {
-    // Show helpful error with the actual error message
     document.getElementById('list').innerHTML = `
       <div class="err-box">
         <b>⚠️ Could not load trials</b>
-        ${e.message.includes('Failed to fetch') || e.message.includes('CORS')
-          ? `<p>CORS is blocking the browser from reaching your panel directly.</p>
-             <p style="margin-top:8px">Quick fix: share this error with me and I'll set up a tiny proxy worker in 2 minutes.</p>`
+        ${!proxyUrl
+          ? `<p>No proxy URL set. Enter your Cloudflare proxy worker URL in Settings.</p>`
           : `<p>${e.message}</p>`
         }
         <code>${e.message}</code>
