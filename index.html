@@ -212,11 +212,13 @@ let pendingMarkId = null;
 // ================================================================
 // SETTINGS
 // ================================================================
+const DEFAULT_PROXY = 'https://iptv-cors-proxy.medmaar.workers.dev';
+
 function getSettings() {
   return {
     apiKey:   localStorage.getItem('iptv_api_key') || '',
     apiUrl:   localStorage.getItem('iptv_api_url') || 'https://activationpanel.ru',
-    proxyUrl: localStorage.getItem('iptv_proxy_url') || '',
+    proxyUrl: localStorage.getItem('iptv_proxy_url') || DEFAULT_PROXY,
   };
 }
 
@@ -224,7 +226,7 @@ function openSettings() {
   const s = getSettings();
   document.getElementById('apiKeyInput').value   = s.apiKey;
   document.getElementById('apiUrlInput').value   = s.apiUrl;
-  document.getElementById('proxyUrlInput').value = s.proxyUrl;
+  document.getElementById('proxyUrlInput').value = s.proxyUrl || DEFAULT_PROXY;
   document.getElementById('settingsCancelBtn').style.display = s.apiKey ? '' : 'none';
   document.getElementById('settingsOverlay').classList.add('open');
 }
